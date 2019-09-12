@@ -25,27 +25,24 @@
 #include "api1/CameraClient.h"
 #include "device1/CameraHardwareInterface.h"
 #include "CameraService.h"
+#include "utils/CameraThreadState.h"
 
 namespace android {
 
 #define LOG1(...) ALOGD_IF(gLogLevel >= 1, __VA_ARGS__);
 #define LOG2(...) ALOGD_IF(gLogLevel >= 2, __VA_ARGS__);
 
-static int getCallingPid() {
-    return IPCThreadState::self()->getCallingPid();
-}
-
 CameraClient::CameraClient(const sp<CameraService>& cameraService,
         const sp<hardware::ICameraClient>& cameraClient,
         const String16& clientPackageName,
         int cameraId, int cameraFacing,
         int clientPid, int clientUid,
-        int servicePid, bool legacyMode):
+        int servicePid):
         Client(cameraService, cameraClient, clientPackageName,
                 String8::format("%d", cameraId), cameraId, cameraFacing, clientPid,
                 clientUid, servicePid)
 {
-    int callingPid = getCallingPid();
+    int callingPid = CameraThreadState::getCallingPid();
     LOG1("CameraClient::CameraClient E (pid %d, id %d)", callingPid, cameraId);
 
     mHardware = NULL;
@@ -57,7 +54,6 @@ CameraClient::CameraClient(const sp<CameraService>& cameraService,
     // Callback is disabled by default
     mPreviewCallbackFlag = CAMERA_FRAME_CALLBACK_FLAG_NOOP;
     mOrientation = getOrientation(0, mCameraFacing == CAMERA_FACING_FRONT);
-    mLegacyMode = legacyMode;
     mPlayShutterSound = true;
 
     mLongshotEnabled = false;
@@ -67,7 +63,7 @@ CameraClient::CameraClient(const sp<CameraService>& cameraService,
 
 status_t CameraClient::initialize(sp<CameraProviderManager> manager,
         const String8& /*monitorTags*/) {
-    int callingPid = getCallingPid();
+    int callingPid = CameraThreadState::getCallingPid();
     status_t res;
 
     LOG1("CameraClient::initialize E (pid %d, id %d)", callingPid, mCameraId);
@@ -108,7 +104,7 @@ status_t CameraClient::initialize(sp<CameraProviderManager> manager,
 // tear down the client
 CameraClient::~CameraClient() {
     mDestructionStarted = true;
-    int callingPid = getCallingPid();
+    int callingPid = CameraThreadState::getCallingPid();
     LOG1("CameraClient::~CameraClient E (pid %d, this %p)", callingPid, this);
 
     disconnect();
@@ -151,7 +147,7 @@ status_t CameraClient::dumpClient(int fd, const Vector<String16>& args) {
 // ----------------------------------------------------------------------------
 
 status_t CameraClient::checkPid() const {
-    int callingPid = getCallingPid();
+    int callingPid = CameraThreadState::getCallingPid();
     if (callingPid == mClientPid) return NO_ERROR;
 
     ALOGW("attempt to use a locked camera from a different process"
@@ -161,7 +157,8 @@ status_t CameraClient::checkPid() const {
 
 status_t CameraClient::checkPidAndHardware() const {
     if (mHardware == 0) {
-        ALOGE("attempt to use a camera after disconnect() (pid %d)", getCallingPid());
+        ALOGE("attempt to use a camera after disconnect() (pid %d)",
+              CameraThreadState::getCallingPid());
         return INVALID_OPERATION;
     }
     status_t result = checkPid();
@@ -170,7 +167,7 @@ status_t CameraClient::checkPidAndHardware() const {
 }
 
 status_t CameraClient::lock() {
-    int callingPid = getCallingPid();
+    int callingPid = CameraThreadState::getCallingPid();
     LOG1("lock (pid %d)", callingPid);
     Mutex::Autolock lock(mLock);
 
@@ -185,7 +182,7 @@ status_t CameraClient::lock() {
 }
 
 status_t CameraClient::unlock() {
-    int callingPid = getCallingPid();
+    int callingPid = CameraThreadState::getCallingPid();
     LOG1("unlock (pid %d)", callingPid);
     Mutex::Autolock lock(mLock);
 
@@ -207,7 +204,7 @@ status_t CameraClient::unlock() {
 
 // connect a new client to the camera
 status_t CameraClient::connect(const sp<hardware::ICameraClient>& client) {
-    int callingPid = getCallingPid();
+    int callingPid = CameraThreadState::getCallingPid();
     LOG1("connect E (pid %d)", callingPid);
     Mutex::Autolock lock(mLock);
 
@@ -243,7 +240,7 @@ static void disconnectWindow(const sp<ANativeWindow>& window) {
 }
 
 binder::Status CameraClient::disconnect() {
-    int callingPid = getCallingPid();
+    int callingPid = CameraThreadState::getCallingPid();
     LOG1("disconnect E (pid %d)", callingPid);
     Mutex::Autolock lock(mLock);
 
@@ -337,7 +334,7 @@ status_t CameraClient::setPreviewWindow(const sp<IBinder>& binder,
 status_t CameraClient::setPreviewTarget(
         const sp<IGraphicBufferProducer>& bufferProducer) {
     LOG1("setPreviewTarget(%p) (pid %d)", bufferProducer.get(),
-            getCallingPid());
+            CameraThreadState::getCallingPid());
 
     sp<IBinder> binder;
     sp<ANativeWindow> window;
@@ -354,7 +351,7 @@ status_t CameraClient::setPreviewTarget(
 // set the preview callback flag to affect how the received frames from
 // preview are handled.
 void CameraClient::setPreviewCallbackFlag(int callback_flag) {
-    LOG1("setPreviewCallbackFlag(%d) (pid %d)", callback_flag, getCallingPid());
+    LOG1("setPreviewCallbackFlag(%d) (pid %d)", callback_flag, CameraThreadState::getCallingPid());
     Mutex::Autolock lock(mLock);
     if (checkPidAndHardware() != NO_ERROR) return;
 
@@ -375,13 +372,13 @@ status_t CameraClient::setPreviewCallbackTarget(
 
 // start preview mode
 status_t CameraClient::startPreview() {
-    LOG1("startPreview (pid %d)", getCallingPid());
+    LOG1("startPreview (pid %d)", CameraThreadState::getCallingPid());
     return startCameraMode(CAMERA_PREVIEW_MODE);
 }
 
 // start recording mode
 status_t CameraClient::startRecording() {
-    LOG1("startRecording (pid %d)", getCallingPid());
+    LOG1("startRecording (pid %d)", CameraThreadState::getCallingPid());
     return startCameraMode(CAMERA_RECORDING_MODE);
 }
 
@@ -464,7 +461,7 @@ status_t CameraClient::startRecordingMode() {
 
 // stop preview mode
 void CameraClient::stopPreview() {
-    LOG1("stopPreview (pid %d)", getCallingPid());
+    LOG1("stopPreview (pid %d)", CameraThreadState::getCallingPid());
     Mutex::Autolock lock(mLock);
     if (checkPidAndHardware() != NO_ERROR) return;
 
@@ -480,7 +477,7 @@ void CameraClient::stopPreview() {
 
 // stop recording mode
 void CameraClient::stopRecording() {
-    LOG1("stopRecording (pid %d)", getCallingPid());
+    LOG1("stopRecording (pid %d)", CameraThreadState::getCallingPid());
     {
         Mutex::Autolock lock(mLock);
         if (checkPidAndHardware() != NO_ERROR) return;
@@ -506,7 +503,7 @@ void CameraClient::releaseRecordingFrame(const sp<IMemory>& mem) {
     if (checkPidAndHardware() != NO_ERROR) return;
     if (mem == nullptr) {
         android_errorWriteWithInfoLog(CameraService::SN_EVENT_LOG_ID, "26164272",
-                IPCThreadState::self()->getCallingUid(), nullptr, 0);
+                CameraThreadState::getCallingUid(), nullptr, 0);
         return;
     }
 
@@ -618,7 +615,7 @@ status_t CameraClient::setVideoBufferMode(int32_t videoBufferMode) {
 }
 
 bool CameraClient::previewEnabled() {
-    LOG1("previewEnabled (pid %d)", getCallingPid());
+    LOG1("previewEnabled (pid %d)", CameraThreadState::getCallingPid());
 
     Mutex::Autolock lock(mLock);
     if (checkPidAndHardware() != NO_ERROR) return false;
@@ -626,7 +623,7 @@ bool CameraClient::previewEnabled() {
 }
 
 bool CameraClient::recordingEnabled() {
-    LOG1("recordingEnabled (pid %d)", getCallingPid());
+    LOG1("recordingEnabled (pid %d)", CameraThreadState::getCallingPid());
 
     Mutex::Autolock lock(mLock);
     if (checkPidAndHardware() != NO_ERROR) return false;
@@ -634,7 +631,7 @@ bool CameraClient::recordingEnabled() {
 }
 
 status_t CameraClient::autoFocus() {
-    LOG1("autoFocus (pid %d)", getCallingPid());
+    LOG1("autoFocus (pid %d)", CameraThreadState::getCallingPid());
 
     Mutex::Autolock lock(mLock);
     status_t result = checkPidAndHardware();
@@ -644,7 +641,7 @@ status_t CameraClient::autoFocus() {
 }
 
 status_t CameraClient::cancelAutoFocus() {
-    LOG1("cancelAutoFocus (pid %d)", getCallingPid());
+    LOG1("cancelAutoFocus (pid %d)", CameraThreadState::getCallingPid());
 
     Mutex::Autolock lock(mLock);
     status_t result = checkPidAndHardware();
@@ -655,7 +652,7 @@ status_t CameraClient::cancelAutoFocus() {
 
 // take a picture - image is returned in callback
 status_t CameraClient::takePicture(int msgType) {
-    LOG1("takePicture (pid %d): 0x%x", getCallingPid(), msgType);
+    LOG1("takePicture (pid %d): 0x%x", CameraThreadState::getCallingPid(), msgType);
 
     Mutex::Autolock lock(mLock);
     status_t result = checkPidAndHardware();
@@ -688,7 +685,7 @@ status_t CameraClient::takePicture(int msgType) {
 
 // set preview/capture parameters - key/value pairs
 status_t CameraClient::setParameters(const String8& params) {
-    LOG1("setParameters (pid %d) (%s)", getCallingPid(), params.string());
+    LOG1("setParameters (pid %d) (%s)", CameraThreadState::getCallingPid(), params.string());
 
     Mutex::Autolock lock(mLock);
     status_t result = checkPidAndHardware();
@@ -703,16 +700,18 @@ status_t CameraClient::setParameters(const String8& params) {
 String8 CameraClient::getParameters() const {
     Mutex::Autolock lock(mLock);
     // The camera service can unconditionally get the parameters at all times
-    if (getCallingPid() != mServicePid && checkPidAndHardware() != NO_ERROR) return String8();
+    if (CameraThreadState::getCallingPid() != mServicePid && checkPidAndHardware() != NO_ERROR) {
+        return String8();
+    }
 
     String8 params(mHardware->getParameters().flatten());
-    LOG1("getParameters (pid %d) (%s)", getCallingPid(), params.string());
+    LOG1("getParameters (pid %d) (%s)", CameraThreadState::getCallingPid(), params.string());
     return params;
 }
 
 // enable shutter sound
 status_t CameraClient::enableShutterSound(bool enable) {
-    LOG1("enableShutterSound (pid %d)", getCallingPid());
+    LOG1("enableShutterSound (pid %d)", CameraThreadState::getCallingPid());
 
     status_t result = checkPidAndHardware();
     if (result != NO_ERROR) return result;
@@ -722,32 +721,12 @@ status_t CameraClient::enableShutterSound(bool enable) {
         return OK;
     }
 
-    // the camera2 api legacy mode can unconditionally disable the shutter sound
-    if (mLegacyMode) {
-        ALOGV("%s: Disable shutter sound in legacy mode", __FUNCTION__);
-        mPlayShutterSound = false;
-        return OK;
-    }
-
-    // Disabling shutter sound may not be allowed. In that case only
-    // allow the mediaserver process to disable the sound.
-    char value[PROPERTY_VALUE_MAX];
-    property_get("ro.camera.sound.forced", value, "0");
-    if (strcmp(value, "0") != 0) {
-        // Disabling shutter sound is not allowed. Deny if the current
-        // process is not mediaserver.
-        if (getCallingPid() != getpid()) {
-            ALOGE("Failed to disable shutter sound. Permission denied (pid %d)", getCallingPid());
-            return PERMISSION_DENIED;
-        }
-    }
-
     mPlayShutterSound = false;
     return OK;
 }
 
 status_t CameraClient::sendCommand(int32_t cmd, int32_t arg1, int32_t arg2) {
-    LOG1("sendCommand (pid %d)", getCallingPid());
+    LOG1("sendCommand (pid %d)", CameraThreadState::getCallingPid());
     int orientation;
     Mutex::Autolock lock(mLock);
     status_t result = checkPidAndHardware();
